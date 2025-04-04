@@ -83,6 +83,67 @@ int main(int argc, char *argv[]) {
     printf("Image unmounted.\n");
     return 0;
 }
+// FIANAS ATTEMPT:
+//#include <stdio.h>
+//#include <stdlib.h>
+//#include <string.h>
+//#include "fat32.h"
+//#include "lexer.h"
+//
+//FILE *fp = NULL;
+//BPB bpb;
+//char imageName[256] = {0};
+//
+//int main(int argc, char *argv[]) {
+//    if (argc != 2) {
+//        fprintf(stderr, "Usage: ./filesys [FAT32 IMAGE FILE]\n");
+//        return 1;
+//    }
+//
+//    strncpy(imageName, argv[1], sizeof(imageName) - 1);
+//    fp = fopen(imageName, "rb+");
+//    if (!fp) {
+//        perror("Error opening image file");
+//        return 1;
+//    }
+//
+//    if (read_bpb(fp, &bpb) != 0) {
+//        fprintf(stderr, "Error reading BPB\n");
+//        fclose(fp);
+//        return 1;
+//    }
+//
+//    while (1) {
+//        printf("%s/> ", imageName);
+//
+//        char *input = get_input();
+//        tokenlist *tokens = get_tokens(input);
+//
+//        if (tokens->size == 0) {
+//            free(input);
+//            free_tokens(tokens);
+//            continue;
+//        }
+//
+//        char *cmd = tokens->items[0];
+//
+//        if (strcmp(cmd, "exit") == 0) {
+//            free(input);
+//            free_tokens(tokens);
+//            break;
+//        } else if (strcmp(cmd, "info") == 0) {
+//            print_info(&bpb);
+//        } else {
+//            printf("Unknown command: %s\n", cmd);
+//        }
+//
+//        free(input);
+//        free_tokens(tokens);
+//    }
+//
+//    fclose(fp);
+//    return 0;
+//}
 
 
 

@@ -33,3 +33,29 @@ void print_fat32_info(FAT32 *fs) {
     printf("Entries in One FAT: %u\n", fs->num_fats);
     printf("Size of Image: %u bytes\n", fs->total_sectors * fs->bytes_per_sector);
 }
+//FIANAS ATTEMPT
+// #include "fat32.h"
+//#include <stdio.h>
+//
+//int read_bpb(FILE *fp, BPB *bpb) {
+//    fseek(fp, 0, SEEK_SET);
+//    if (fread(bpb, sizeof(BPB), 1, fp) != 1) {
+//        return -1;
+//    }
+//    return 0;
+//}
+//
+//void print_info(const BPB *bpb) {
+//    uint32_t TotSec = (bpb->BPB_TotSec16 != 0) ? bpb->BPB_TotSec16 : bpb->BPB_TotSec32;
+//    uint32_t FATSz = (bpb->BPB_FATSz16 != 0) ? bpb->BPB_FATSz16 : bpb->BPB_FATSz32;
+//
+//    uint32_t DataSec = TotSec - (bpb->BPB_RsvdSecCnt + (bpb->BPB_NumFATs * FATSz));
+//    uint32_t CountOfClusters = DataSec / bpb->BPB_SecPerClus;
+//
+//    printf("Position of root cluster: %u\n", bpb->BPB_RootClus);
+//    printf("Bytes per sector: %u\n", bpb->BPB_BytsPerSec);
+//    printf("Sectors per cluster: %u\n", bpb->BPB_SecPerClus);
+//    printf("Total # of clusters in data region: %u\n", CountOfClusters);
+//    printf("# of entries in one FAT: %u\n", (FATSz * bpb->BPB_BytsPerSec) / 4);
+//    printf("Size of image (in bytes): %lu\n", (unsigned long)TotSec * bpb->BPB_BytsPerSec);
+//}
