@@ -3,9 +3,9 @@
 [Description]
 
 ## Group Members
-- **John Doe**: jd19@fsu.edu
-- **Jane Smith**: js19@fsu.edu
-- **Alex Brown**: ab19@fsu.edu
+- **Isabella Baez**: igb22b@fsu.edu
+- **Jordan Freyman**: js19@fsu.edu
+- **Fiana Frukhtman**: ab19@fsu.edu
 ## Division of Labor
 
 ### Part 1: Mounting the Image
