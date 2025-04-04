@@ -5,7 +5,7 @@
 ## Group Members
 - **Isabella Baez**: igb22b@fsu.edu
 - **Jordan Freyman**: js19@fsu.edu
-- **Fiana Frukhtman**: ab19@fsu.edu
+- **Fiana Frukhtman**: fmf21@fsu.edu
 ## Division of Labor
 
 ### Part 1: Mounting the Image
