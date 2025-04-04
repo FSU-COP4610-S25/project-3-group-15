@@ -100,6 +100,15 @@ int main(int argc, char *argv[]) {
 //    }
   
 // insert while loop similar to that from shell
+    while(1) {
+        //print prompt
+        if (command == "exit")
+            break;
+        //else, do the system
+        else if (command == "info") {
+            //implement info here 
+        }
+    }
   
     fclose(image);
     printf("Image unmounted.\n");
