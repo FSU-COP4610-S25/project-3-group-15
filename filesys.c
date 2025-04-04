@@ -1,6 +1,6 @@
-//#include <stdio.h>
-//#include <stdlib.h>
-//#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 //
 //FILE *image = NULL;
 //
@@ -68,18 +68,18 @@
 //    printf("Size of image: %ld bytes\n", size);
 //}
 //
-//int main(int argc, char *argv[]) {
-//    if (argc != 2) {
-//        fprintf(stderr, "Usage: %s [FAT32 IMAGE FILE]\n", argv[0]);
-//        return 1;
-//    }
-//
-//    image = fopen(argv[1], "rb");
-//    if (!image) {
-//        perror("Error opening image");
-//        return 1;
-//    }
-//
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s [FAT32 IMAGE FILE]\n", argv[0]);
+        return 1;
+    }
+
+    image = fopen(argv[1], "rb");
+    if (!image) {
+        perror("Error opening image");
+        return 1;
+    }
+
 //    load_bpb();
 //
 //    char command[128];
@@ -98,11 +98,13 @@
 //            printf("Unknown command: %s\n", command);
 //        }
 //    }
-//
-//    fclose(image);
-//    printf("Image unmounted.\n");
-//    return 0;
-//}
+  
+// insert while loop similar to that from shell
+  
+    fclose(image);
+    printf("Image unmounted.\n");
+    return 0;
+}
 
 
 
