@@ -65,10 +65,36 @@ int change_directory(FILE *img, FAT32 *fs, uint32_t *cur, tokenlist *tok, char *
     const char *t=tok->items[1];
     if (!strcmp(t,".")) return 0;
     if (!strcmp(t,"..")) {
-        *cur = fs->root_cluster;
-        cwd[0]='\0';
-        return 0;
+        // Open the current cluster and find the ".." entry
+        uint32_t sector = first_sector_of(fs, *cur);
+        uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+        uint8_t *buf = malloc(bpc);
+        fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
+        fread(buf, 1, bpc, img);
+    
+        for (uint32_t off = 0; off < bpc; off += 32) {
+            if (buf[off] == 0x00 || buf[off] == 0xE5) continue;
+            if (strncmp((char *)&buf[off], "..        ", 11) == 0) {
+                uint16_t hi = *(uint16_t *)&buf[off + 20];
+                uint16_t lo = *(uint16_t *)&buf[off + 26];
+                *cur = ((uint32_t)hi << 16) | lo;
+                break;
+            }
+        }
+
+    free(buf);
+
+    // Trim cwd path (go up one level)
+    char *last_slash = strrchr(cwd, '/');
+    if (last_slash != NULL) {
+        *last_slash = '\0';
+        if (strlen(cwd) == 0)
+            cwd[0] = '\0';  // back to root
     }
+
+    return 0;
+}
+
     uint32_t sector=first_sector_of(fs,*cur), bpc=fs->bytes_per_sector*fs->sectors_per_cluster;
     uint8_t *buf=malloc(bpc);
     fseek(img,sector*fs->bytes_per_sector,SEEK_SET); fread(buf,1,bpc,img);
