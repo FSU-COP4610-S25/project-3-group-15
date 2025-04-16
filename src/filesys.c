@@ -280,6 +280,26 @@ void cmd_open(FILE *img, FAT32 *fs, uint32_t cur, tokenlist *tok, const char *cw
     printf("Error: too many open files\n");
 }
 
+void cmd_close(tokenlist *tok) {
+    if (tok->size < 2) {
+        printf("Usage: close <filename>\n");
+        return;
+    }
+
+    const char *fname = tok->items[1];
+
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (open_files[i].in_use && strcmp(open_files[i].name, fname) == 0) {
+            open_files[i].in_use = 0;
+            printf("Closed '%s'\n", fname);
+            return;
+        }
+    }
+
+    printf("Error: file '%s' is not opened\n", fname);
+}
+
+
 
 int main(int argc, char*argv[]){
     if(argc!=2){ fprintf(stderr,"Usage: %s [IMG]\n",argv[0]); return 1; }
@@ -300,6 +320,7 @@ int main(int argc, char*argv[]){
             else if(!strcmp(tl->items[0],"exit")) break;
             else if(!strcmp(tl->items[0],"info")) print_fat32_info(&fs);
             else if (!strcmp(tl->items[0], "open")) cmd_open(img, &fs, cur, tl, cwd);
+            else if (!strcmp(tl->items[0], "close")) cmd_close(tl);
             else printf("Unknown: %s\n",tl->items[0]);
         }
         free(in); free_tokens(tl);
