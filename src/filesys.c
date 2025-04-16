@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <ctype.h>
 
 // Compute the first sector of a given data cluster
 static uint32_t first_sector_of(FAT32 *fs, uint32_t cluster) {
@@ -30,7 +31,7 @@ void list_directory(FILE *img, FAT32 *fs, uint32_t cluster) {
         if ((attr & 0x0F) == 0x0F) continue;       // long‑name entry
 
         // skip the on‑disk "." and ".."
-        if (buf[off] == '.') continue;
+        //if (buf[off] == '.') continue;
 
         // build short name + optional extension
         char name[9] = {0}, ext[4] = {0}, full[13];
@@ -45,7 +46,9 @@ void list_directory(FILE *img, FAT32 *fs, uint32_t cluster) {
         else
             snprintf(full, sizeof(full), "%s", name);
 
-        printf("%s\n", full);
+        printf("[DEBUG] Found: raw='%.11s' attr=0x%02X -> final='%s'\n", &buf[off], attr, full);
+
+	printf("%s\n", full);
     }
     free(buf);
 }
@@ -128,13 +131,24 @@ void mkdir_entry(FILE *img, FAT32 *fs, uint32_t current_cluster, const char *nam
     fread(buf, 1, bpc, img);
 
     // Convert name to 8.3 format
-    char entry_name[11] = { ' ' };
+    char entry_name[11];
+    memset(entry_name, ' ', 11); // space-fill all 11 characters
+    
+    // Copy up to 8 characters before '.'
     int i = 0, j = 0;
-    while (name[i] && name[i] != '.' && j < 8) entry_name[j++] = toupper(name[i++]);
+    while (name[i] && name[i] != '.' && j < 8) {
+        entry_name[j++] = toupper(name[i++]);
+    }
+
+    // Copy up to 3 characters after '.'
     if (name[i] == '.') {
-        i++;
+        i++; // skip the dot
         j = 8;
-        while (name[i] && j < 11) entry_name[j++] = toupper(name[i++]);
+        int k = 0;
+        while (name[i] && k < 3) {
+            entry_name[j++] = toupper(name[i++]);
+            k++;
+        }
     }
 
     // Check if it already exists
@@ -165,6 +179,7 @@ void mkdir_entry(FILE *img, FAT32 *fs, uint32_t current_cluster, const char *nam
     memcpy(&buf[offset], entry_name, 11);
     buf[offset + 11] = is_dir ? 0x10 : 0x20; // attributes
     for (int i = 12; i < 32; i++) buf[offset + i] = 0;
+    printf("[DEBUG] Wrote entry: name='%.11s', attr=0x%02X\n", entry_name, buf[offset + 11]);
 
     // No allocated cluster yet → set cluster fields to 0
     *(uint16_t *)&buf[offset + 20] = 0;
