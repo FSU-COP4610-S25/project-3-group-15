@@ -10,6 +10,20 @@
 #define ATTR_ARCHIVE   0x20
 #define EOC_MARK       0x0FFFFFFF
 
+#define MAX_OPEN_FILES 128
+
+typedef struct {
+    char name[13];         // 8.3 name (null-terminated)
+    uint32_t cluster;      // starting cluster
+    uint32_t size;         // file size
+    char mode[4];          // "-r", "-w", etc
+    uint32_t offset;       // file pointer offset
+    char path[1024];       // full path
+    int in_use;            // 1 = open, 0 = closed
+} OpenFile;
+
+OpenFile open_files[MAX_OPEN_FILES] = {0};
+
 // Compute the first sector of a data cluster
 static uint32_t first_sector_of(FAT32 *fs, uint32_t cluster) {
     uint32_t first_data = fs->reserved_sector_count
@@ -145,6 +159,43 @@ static int add_directory_entry(FILE*img, FAT32*fs, uint32_t cluster,
     free(buf);
     return ok?0:-1;
 }
+int find_entry(FILE *img, FAT32 *fs, uint32_t cluster, const char *target, char shortname[11],
+    uint32_t *start_cluster, uint32_t *size, uint8_t *attr_out) {
+    uint32_t sector = first_sector_of(fs, cluster);
+    uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+    uint8_t *buf = malloc(bpc);
+    fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
+    fread(buf, 1, bpc, img);
+
+    for (uint32_t off = 0; off < bpc; off += 32) {
+    if (buf[off] == 0x00 || buf[off] == 0xE5) continue;
+    if ((buf[off + 11] & 0x0F) == 0x0F) continue;
+
+    char name[9] = {0}, ext[4] = {0}, full[13];
+    memcpy(name, &buf[off], 8);
+    memcpy(ext, &buf[off + 8], 3);
+    for (int i = 7; i >= 0 && name[i] == ' '; i--) name[i] = '\0';
+    for (int i = 2; i >= 0 && ext[i] == ' '; i--) ext[i] = '\0';
+    if (ext[0])
+    snprintf(full, sizeof(full), "%s.%s", name, ext);
+    else
+    snprintf(full, sizeof(full), "%s", name);
+
+    if (strcmp(full, target) == 0) {
+    memcpy(shortname, &buf[off], 11);
+    uint16_t hi = *(uint16_t *)&buf[off + 20];
+    uint16_t lo = *(uint16_t *)&buf[off + 26];
+    *start_cluster = ((uint32_t)hi << 16) | lo;
+    *size = *(uint32_t *)&buf[off + 28];
+    if (attr_out) *attr_out = buf[off + 11];
+    free(buf);
+    return 0;  // found
+    }
+    }
+
+    free(buf);
+    return -1;
+}
 
 // mkdir implementation
 void cmd_mkdir(FILE*img, FAT32*fs, uint32_t*cur, tokenlist*tok){
@@ -176,6 +227,60 @@ void cmd_creat(FILE*img, FAT32*fs, uint32_t*cur, tokenlist*tok){
         printf("Error: cannot create file\n");
 }
 
+void cmd_open(FILE *img, FAT32 *fs, uint32_t cur, tokenlist *tok, const char *cwd) {
+    if (tok->size < 3) {
+        printf("Usage: open <filename> <-r|-w|-rw|-wr>\n");
+        return;
+    }
+
+    const char *fname = tok->items[1];
+    const char *flag = tok->items[2];
+
+    if (!(strcmp(flag, "-r") == 0 || strcmp(flag, "-w") == 0 ||
+          strcmp(flag, "-rw") == 0 || strcmp(flag, "-wr") == 0)) {
+        printf("Error: invalid open mode '%s'\n", flag);
+        return;
+    }
+
+    // Check if already open
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (open_files[i].in_use && strcmp(open_files[i].name, fname) == 0) {
+            printf("Error: file '%s' already opened\n", fname);
+            return;
+        }
+    }
+
+    char shortname[11];
+    uint32_t cluster, size;
+    uint8_t attr;
+    if (find_entry(img, fs, cur, fname, shortname, &cluster, &size, &attr) != 0) {
+        printf("Error: file '%s' not found\n", fname);
+        return;
+    }
+
+    if (attr & ATTR_DIRECTORY) {
+        printf("Error: '%s' is a directory\n", fname);
+        return;
+    }
+
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (!open_files[i].in_use) {
+            strncpy(open_files[i].name, fname, sizeof(open_files[i].name));
+            open_files[i].cluster = cluster;
+            open_files[i].size = size;
+            strncpy(open_files[i].mode, flag + 1, sizeof(open_files[i].mode)); // skip '-'
+            open_files[i].offset = 0;
+            snprintf(open_files[i].path, sizeof(open_files[i].path), "%s/%s", cwd[0] ? cwd : "", fname);
+            open_files[i].in_use = 1;
+            printf("Opened '%s' with mode %s (offset = 0)\n", fname, flag);
+            return;
+        }
+    }
+
+    printf("Error: too many open files\n");
+}
+
+
 int main(int argc, char*argv[]){
     if(argc!=2){ fprintf(stderr,"Usage: %s [IMG]\n",argv[0]); return 1; }
     FILE*img=fopen(argv[1],"rb+"); if(!img){ perror("open"); return 1; }
@@ -194,6 +299,7 @@ int main(int argc, char*argv[]){
             else if(!strcmp(tl->items[0],"creat")) cmd_creat(img,&fs,&cur,tl);
             else if(!strcmp(tl->items[0],"exit")) break;
             else if(!strcmp(tl->items[0],"info")) print_fat32_info(&fs);
+            else if (!strcmp(tl->items[0], "open")) cmd_open(img, &fs, cur, tl, cwd);
             else printf("Unknown: %s\n",tl->items[0]);
         }
         free(in); free_tokens(tl);
