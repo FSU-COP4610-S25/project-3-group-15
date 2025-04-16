@@ -12,19 +12,23 @@ typedef struct {
     uint8_t sectors_per_cluster; // 0x0D
     uint16_t reserved_sector_count; // 0x0E
     uint8_t num_fats;            // 0x10
-    uint16_t root_entry_count;   // 0x11 (unused in FAT32)
+    uint16_t root_entry_count;   // 0x11
     uint16_t total_sectors_16;   // 0x13
     uint8_t media;               // 0x15
-    uint16_t fat_size_16;        // 0x16 (unused in FAT32)
+    uint16_t fat_size_16;        // 0x16
     uint16_t sectors_per_track;  // 0x18
     uint16_t num_heads;          // 0x1A
     uint32_t hidden_sectors;     // 0x1C
     uint32_t total_sectors_32;   // 0x20
+
+    // FAT32-specific fields
     uint32_t fat_size_32;        // 0x24
     uint16_t ext_flags;          // 0x28
     uint16_t fs_version;         // 0x2A
     uint32_t root_cluster;       // 0x2C
-    // (You can include more fields if needed)
+    uint16_t fs_info;            // 0x30
+    uint16_t backup_boot_sector; // 0x32
+    uint8_t reserved[12];        // 0x34 - 0x3F
 } BPB;
 #pragma pack(pop)
 
