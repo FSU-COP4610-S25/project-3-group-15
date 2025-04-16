@@ -344,6 +344,31 @@ void cmd_lsof() {
         printf("No files are currently open.\n");
 }
 
+void cmd_lseek(tokenlist *tok) {
+    if (tok->size < 3) {
+        printf("Usage: lseek <filename> <offset>\n");
+        return;
+    }
+
+    const char *fname = tok->items[1];
+    int offset = atoi(tok->items[2]);
+
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (open_files[i].in_use && strcmp(open_files[i].name, fname) == 0) {
+            if (offset < 0 || (uint32_t)offset > open_files[i].size) {
+                printf("Error: offset %d is out of bounds (file size = %u bytes)\n", offset, open_files[i].size);
+                return;
+            }
+
+            open_files[i].offset = offset;
+            printf("Set offset of '%s' to %d\n", fname, offset);
+            return;
+        }
+    }
+
+    printf("Error: file '%s' is not open\n", fname);
+}
+
 
 int main(int argc, char*argv[]){
     if(argc!=2){ fprintf(stderr,"Usage: %s [IMG]\n",argv[0]); return 1; }
@@ -366,6 +391,7 @@ int main(int argc, char*argv[]){
             else if (!strcmp(tl->items[0], "open")) cmd_open(img, &fs, cur, tl, cwd);
             else if (!strcmp(tl->items[0], "close")) cmd_close(tl);
             else if (!strcmp(tl->items[0], "lsof")) cmd_lsof();
+            else if (!strcmp(tl->items[0], "lseek")) cmd_lseek(tl);
             else printf("Unknown: %s\n",tl->items[0]);
         }
         free(in); free_tokens(tl);
