@@ -49,9 +49,7 @@ void list_directory(FILE *img, FAT32 *fs, uint32_t cluster) {
     }
     free(buf);
 }
-
-// cd: returns 0 on success, 1 if not found, 2 if found but not a directory.
-// Also updates both *current_cluster and cwd when successful.
+// cd: update current_cluster and cwd
 int change_directory(FILE *img, FAT32 *fs,
                      uint32_t *current_cluster,
                      tokenlist *tokens,
@@ -62,31 +60,25 @@ int change_directory(FILE *img, FAT32 *fs,
         return 1;
     }
     const char *target = tokens->items[1];
-    // special cases:
-    if (strcmp(target, ".") == 0) return 0;
+    if (strcmp(target, ".") == 0)    return 0;
     if (strcmp(target, "..") == 0) {
         *current_cluster = fs->root_cluster;
-        // truncate cwd to parent
-        if (strcmp(cwd, "/") != 0) {
-            char *p = strrchr(cwd + 1, '/');
-            if (p) *p = '\0';
-            else  strcpy(cwd, "/");
-        }
+        cwd[0] = '\0';             // back to root: empty cwd
         return 0;
     }
 
-    // scan current directory cluster for the entry named 'target'
+    // scan for entry in the current directory…
     uint32_t sector = first_sector_of(fs, *current_cluster);
-    uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
-    uint8_t *buf = malloc(bpc);
+    uint32_t bpc    = fs->bytes_per_sector * fs->sectors_per_cluster;
+    uint8_t *buf    = malloc(bpc);
     fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
     fread(buf, 1, bpc, img);
 
-    int status = 1;  // assume not found
+    int status = 1;
     for (uint32_t off = 0; off < bpc; off += 32) {
         uint8_t first = buf[off];
-        if (first == 0x00) break;
-        if (first == 0xE5) continue;
+        if      (first == 0x00) break;
+        else if (first == 0xE5)  continue;
         uint8_t attr = buf[off + 11];
         if ((attr & 0x0F) == 0x0F) continue;
         if (buf[off] == '.')     continue;
@@ -103,22 +95,22 @@ int change_directory(FILE *img, FAT32 *fs,
             snprintf(full, sizeof(full), "%s", name);
 
         if (strcmp(full, target) == 0) {
-            if (!(attr & 0x10)) {  // ATTR_DIRECTORY = 0x10
-                status = 2;        // found but not a directory
+            if (!(attr & 0x10)) {  // not a directory
+                status = 2;
                 break;
             }
-            // fetch the new cluster
             uint16_t hi = *(uint16_t *)&buf[off + 20];
             uint16_t lo = *(uint16_t *)&buf[off + 26];
             *current_cluster = ((uint32_t)hi << 16) | lo;
-            status = 0;          // success
+            status = 0;
 
-            // update cwd string
-            if (strcmp(cwd, "/") == 0)
-                snprintf(cwd, 1024, "/%s", target);
+            // update cwd: always prefix a single '/'
+            char tmp[1024];
+            if (cwd[0] == '\0')
+                snprintf(tmp, sizeof(tmp), "/%s", target);
             else
-                strncat(cwd, "/", 1024 - strlen(cwd) - 1),
-                        strncat(cwd, target, 1024 - strlen(cwd) - 1);
+                snprintf(tmp, sizeof(tmp), "%s/%s", cwd, target);
+            strcpy(cwd, tmp);
             break;
         }
     }
@@ -145,12 +137,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    uint32_t    current_cluster = fat32.root_cluster;
-    char        cwd[1024]       = "/";
+    uint32_t current_cluster = fat32.root_cluster;
+    char     cwd[1024]       = "";      // start “at root” with empty cwd
 
     while (1) {
-        // prompt now shows the current path
-        printf("[%s]%s/> ", argv[1], cwd);
+        // prompt: e.g. "bin/fat32.img>" or "bin/fat32.img/BLUE>"
+        printf("%s%s> ", argv[1], cwd);
 
         char      *input  = get_input();
         tokenlist *tokens = get_tokens(input);
@@ -166,10 +158,8 @@ int main(int argc, char *argv[]) {
                 int rc = change_directory(image, &fat32,
                                           &current_cluster,
                                           tokens, cwd);
-                if      (rc == 1)
-                    printf("Directory not found: %s\n", tokens->items[1]);
-                else if (rc == 2)
-                    printf("Not a directory:    %s\n", tokens->items[1]);
+                if      (rc == 1) printf("Directory not found: %s\n", tokens->items[1]);
+                else if (rc == 2) printf("Not a directory:    %s\n", tokens->items[1]);
             }
             else if (strcmp(tokens->items[0], "exit") == 0) {
                 break;
@@ -186,4 +176,3 @@ int main(int argc, char *argv[]) {
     fclose(image);
     return 0;
 }
-
