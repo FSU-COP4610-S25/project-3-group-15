@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#ifdef TEST_LEXER
 int main()
 {
 	while (1) {
@@ -26,7 +26,7 @@ int main()
 
 	return 0;
 }
-
+#endif
 char *get_input(void) {
 	char *buffer = NULL;
 	int bufsize = 0;

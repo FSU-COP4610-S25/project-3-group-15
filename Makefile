@@ -1,22 +1,32 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -g
-TARGET = filesys
-OBJS = filesys.o fat32.o lexer.o
+SRC := src
+OBJ := obj
+BIN := bin
+EXECUTABLE:= filesys
 
-all: $(TARGET)
+SRCS := $(wildcard $(SRC)/*.c)
+OBJS := $(patsubst $(SRC)/%.c,$(OBJ)/%.o,$(SRCS))
+INCS := -Iinclude/
+DIRS := $(OBJ)/ $(BIN)/
+EXEC := $(BIN)/$(EXECUTABLE)
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
+CC := gcc
+CFLAGS := -g -Wall -std=c99 $(INCS)
+LDFLAGS :=
 
-filesys.o: filesys.c fat32.h lexer.h
-	$(CC) $(CFLAGS) -c filesys.c
+all: $(EXEC)
 
-fat32.o: fat32.c fat32.h
-	$(CC) $(CFLAGS) -c fat32.c
+$(EXEC): $(OBJS)
+	$(CC) $(CFLAGS) $(OBJS) -o $(EXEC)
 
-lexer.o: lexer.c lexer.h
-	$(CC) $(CFLAGS) -c lexer.c
+$(OBJ)/%.o: $(SRC)/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+run: $(EXEC)
+	$(EXEC) bin/fat32.img
 
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm $(OBJ)/*.o $(EXEC)
 
+$(shell mkdir -p $(DIRS))
+
+.PHONY: run clean all 
