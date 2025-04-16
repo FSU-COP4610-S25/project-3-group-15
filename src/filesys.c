@@ -369,6 +369,96 @@ void cmd_lseek(tokenlist *tok) {
     printf("Error: file '%s' is not open\n", fname);
 }
 
+uint32_t get_next_cluster(FILE *img, FAT32 *fs, uint32_t cluster) {
+    uint32_t fat_offset = fs->reserved_sector_count * fs->bytes_per_sector + cluster * 4;
+    fseek(img, fat_offset, SEEK_SET);
+    uint32_t entry;
+    fread(&entry, 4, 1, img);
+    return entry & 0x0FFFFFFF;
+}
+
+void cmd_read(FILE *img, FAT32 *fs, tokenlist *tok) {
+    if (tok->size < 3) {
+        printf("Usage: read <filename> <size>\n");
+        return;
+    }
+
+    const char *fname = tok->items[1];
+    int req_size = atoi(tok->items[2]);
+    if (req_size <= 0) {
+        printf("Error: invalid read size\n");
+        return;
+    }
+
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (open_files[i].in_use && strcmp(open_files[i].name, fname) == 0) {
+            // Check mode
+            if (!strchr(open_files[i].mode, 'r')) {
+                printf("Error: file not opened for reading\n");
+                return;
+            }
+
+            uint32_t offset = open_files[i].offset;
+            uint32_t size = open_files[i].size;
+
+            if (offset >= size) {
+                printf("EOF reached\n");
+                return;
+            }
+
+            uint32_t to_read = (offset + req_size > size) ? (size - offset) : req_size;
+            uint32_t cluster_size = fs->bytes_per_sector * fs->sectors_per_cluster;
+            uint32_t curr_cluster = open_files[i].cluster;
+            uint32_t bytes_left = to_read;
+            uint32_t skip = offset;
+
+            // Follow FAT chain to the cluster that contains the offset
+            while (skip >= cluster_size) {
+                curr_cluster = get_next_cluster(img, fs, curr_cluster);
+                if (curr_cluster >= 0x0FFFFFF8) {
+                    printf("Error: offset beyond file clusters\n");
+                    return;
+                }
+                skip -= cluster_size;
+            }
+
+            char *buf = malloc(to_read + 1);
+            uint32_t buf_pos = 0;
+
+            while (bytes_left > 0 && curr_cluster < 0x0FFFFFF8) {
+                uint32_t sector = first_sector_of(fs, curr_cluster);
+                uint8_t *cluster_buf = malloc(cluster_size);
+                fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
+                fread(cluster_buf, 1, cluster_size, img);
+
+                uint32_t start = skip;
+                uint32_t available = cluster_size - start;
+                uint32_t copy_bytes = (bytes_left < available) ? bytes_left : available;
+
+                memcpy(buf + buf_pos, cluster_buf + start, copy_bytes);
+                buf_pos += copy_bytes;
+                bytes_left -= copy_bytes;
+                skip = 0;
+
+                free(cluster_buf);
+
+                if (bytes_left > 0)
+                    curr_cluster = get_next_cluster(img, fs, curr_cluster);
+            }
+
+            buf[to_read] = '\0';
+            fwrite(buf, 1, to_read, stdout);
+            printf("\n");
+
+            open_files[i].offset += to_read;
+            free(buf);
+            return;
+        }
+    }
+
+    printf("Error: file '%s' is not open\n", fname);
+}
+
 
 int main(int argc, char*argv[]){
     if(argc!=2){ fprintf(stderr,"Usage: %s [IMG]\n",argv[0]); return 1; }
@@ -392,6 +482,7 @@ int main(int argc, char*argv[]){
             else if (!strcmp(tl->items[0], "close")) cmd_close(tl);
             else if (!strcmp(tl->items[0], "lsof")) cmd_lsof();
             else if (!strcmp(tl->items[0], "lseek")) cmd_lseek(tl);
+            else if (!strcmp(tl->items[0], "read")) cmd_read(img, &fs, tl);
             else printf("Unknown: %s\n",tl->items[0]);
         }
         free(in); free_tokens(tl);
