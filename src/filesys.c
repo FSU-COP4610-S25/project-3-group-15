@@ -325,6 +325,24 @@ void cmd_close(tokenlist *tok) {
     printf("Error: file '%s' is not opened\n", fname);
 }
 
+void cmd_lsof() {
+    int found = 0;
+    printf("%-5s %-13s %-5s %-8s %s\n", "Index", "Name", "Mode", "Offset", "Path");
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (open_files[i].in_use) {
+            printf("%-5d %-13s %-5s %-8u %s\n",
+                i,
+                open_files[i].name,
+                open_files[i].mode,
+                open_files[i].offset,
+                open_files[i].path);
+            found = 1;
+        }
+    }
+
+    if (!found)
+        printf("No files are currently open.\n");
+}
 
 
 int main(int argc, char*argv[]){
@@ -347,6 +365,7 @@ int main(int argc, char*argv[]){
             else if(!strcmp(tl->items[0],"info")) print_fat32_info(&fs);
             else if (!strcmp(tl->items[0], "open")) cmd_open(img, &fs, cur, tl, cwd);
             else if (!strcmp(tl->items[0], "close")) cmd_close(tl);
+            else if (!strcmp(tl->items[0], "lsof")) cmd_lsof();
             else printf("Unknown: %s\n",tl->items[0]);
         }
         free(in); free_tokens(tl);
