@@ -13,30 +13,32 @@ static uint32_t first_sector_of(FAT32 *fs, uint32_t cluster) {
            + first_data;
 }
 
-// ls: list ".", "..", then every entry in the current cluster
+// ls: list ".", "..", then each real entry in the current cluster
 void list_directory(FILE *img, FAT32 *fs, uint32_t cluster) {
-    printf(".\n..\n");  // always include these two
+    printf(".\n..\n");  // always include these
     uint32_t sector = first_sector_of(fs, cluster);
-    uint32_t bytes_per_cluster = fs->bytes_per_sector * fs->sectors_per_cluster;
-    uint8_t *buf = malloc(bytes_per_cluster);
+    uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+    uint8_t *buf = malloc(bpc);
     fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
-    fread(buf, 1, bytes_per_cluster, img);
+    fread(buf, 1, bpc, img);
 
-    for (uint32_t off = 0; off < bytes_per_cluster; off += 32) {
+    for (uint32_t off = 0; off < bpc; off += 32) {
         uint8_t first = buf[off];
-        if (first == 0x00) break;                   // no more entries
-        if (first == 0xE5) continue;                // deleted
+        if      (first == 0x00) break;            // no more entries
+        else if (first == 0xE5)  continue;         // deleted
         uint8_t attr = buf[off + 11];
-        if ((attr & 0x0F) == 0x0F) continue;         // long‑name entry :contentReference[oaicite:0]{index=0}&#8203;:contentReference[oaicite:1]{index=1}
-        if (buf[off] == '.')    continue;           // skip real "." and ".."
+        if ((attr & 0x0F) == 0x0F) continue;       // long‑name entry
 
-        // extract name and extension
+        // skip the on‑disk "." and ".."
+        if (buf[off] == '.') continue;
+
+        // build short name + optional extension
         char name[9] = {0}, ext[4] = {0}, full[13];
-        memcpy(name, &buf[off], 8);
+        memcpy(name, &buf[off],   8);
         memcpy(ext,  &buf[off+8], 3);
         // trim trailing spaces
-        for (int i = 7; i >= 0 && name[i]==' '; i--) name[i] = '\0';
-        for (int i = 2; i >= 0 && ext[i]==' ';  i--) ext[i]  = '\0';
+        for (int i = 7; i>=0 && name[i]==' '; i--) name[i] = '\0';
+        for (int i = 2; i>=0 && ext[i]==' ';  i--) ext[i]  = '\0';
 
         if (ext[0])
             snprintf(full, sizeof(full), "%s.%s", name, ext);
@@ -48,62 +50,82 @@ void list_directory(FILE *img, FAT32 *fs, uint32_t cluster) {
     free(buf);
 }
 
-// cd: return  0 on success
-//            1 if not found
-//            2 if found but not a directory
-int change_directory(FILE *img, FAT32 *fs, uint32_t *current_cluster, tokenlist *tokens) {
+// cd: returns 0 on success, 1 if not found, 2 if found but not a directory.
+// Also updates both *current_cluster and cwd when successful.
+int change_directory(FILE *img, FAT32 *fs,
+                     uint32_t *current_cluster,
+                     tokenlist *tokens,
+                     char *cwd)
+{
     if (tokens->size < 2) {
         printf("Usage: cd <directory>\n");
         return 1;
     }
     const char *target = tokens->items[1];
+    // special cases:
     if (strcmp(target, ".") == 0) return 0;
     if (strcmp(target, "..") == 0) {
         *current_cluster = fs->root_cluster;
+        // truncate cwd to parent
+        if (strcmp(cwd, "/") != 0) {
+            char *p = strrchr(cwd + 1, '/');
+            if (p) *p = '\0';
+            else  strcpy(cwd, "/");
+        }
         return 0;
     }
 
+    // scan current directory cluster for the entry named 'target'
     uint32_t sector = first_sector_of(fs, *current_cluster);
-    uint32_t bytes_per_cluster = fs->bytes_per_sector * fs->sectors_per_cluster;
-    uint8_t *buf = malloc(bytes_per_cluster);
+    uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+    uint8_t *buf = malloc(bpc);
     fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
-    fread(buf, 1, bytes_per_cluster, img);
+    fread(buf, 1, bpc, img);
 
     int status = 1;  // assume not found
-    for (uint32_t off = 0; off < bytes_per_cluster; off += 32) {
+    for (uint32_t off = 0; off < bpc; off += 32) {
         uint8_t first = buf[off];
         if (first == 0x00) break;
         if (first == 0xE5) continue;
         uint8_t attr = buf[off + 11];
         if ((attr & 0x0F) == 0x0F) continue;
-        if (buf[off] == '.') continue;
+        if (buf[off] == '.')     continue;
 
-        // build short name
+        // build short name + extension
         char name[9] = {0}, ext[4] = {0}, full[13];
-        memcpy(name, &buf[off], 8);
-        memcpy(ext,  &buf[off+8],3);
+        memcpy(name, &buf[off],   8);
+        memcpy(ext,  &buf[off+8], 3);
         for (int i = 7; i>=0 && name[i]==' '; i--) name[i] = '\0';
-        for (int i = 2;i>=0 && ext[i]==' ';  i--) ext[i]  = '\0';
-        if (ext[0]) snprintf(full, sizeof(full), "%s.%s", name, ext);
-        else        snprintf(full, sizeof(full), "%s", name);
+        for (int i = 2; i>=0 && ext[i]==' ';  i--) ext[i]  = '\0';
+        if (ext[0])
+            snprintf(full, sizeof(full), "%s.%s", name, ext);
+        else
+            snprintf(full, sizeof(full), "%s", name);
 
         if (strcmp(full, target) == 0) {
-            if (!(attr & 0x10)) {  // ATTR_DIRECTORY = 0x10 :contentReference[oaicite:2]{index=2}&#8203;:contentReference[oaicite:3]{index=3}
-                status = 2;        // found but not dir
+            if (!(attr & 0x10)) {  // ATTR_DIRECTORY = 0x10
+                status = 2;        // found but not a directory
                 break;
             }
-            // fetch its first cluster
+            // fetch the new cluster
             uint16_t hi = *(uint16_t *)&buf[off + 20];
             uint16_t lo = *(uint16_t *)&buf[off + 26];
             *current_cluster = ((uint32_t)hi << 16) | lo;
             status = 0;          // success
+
+            // update cwd string
+            if (strcmp(cwd, "/") == 0)
+                snprintf(cwd, 1024, "/%s", target);
+            else
+                strncat(cwd, "/", 1024 - strlen(cwd) - 1),
+                        strncat(cwd, target, 1024 - strlen(cwd) - 1);
             break;
         }
     }
+
     free(buf);
     return status;
 }
-
 
 
 int main(int argc, char *argv[]) {
@@ -123,10 +145,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    uint32_t current_cluster = fat32.root_cluster;
+    uint32_t    current_cluster = fat32.root_cluster;
+    char        cwd[1024]       = "/";
+
     while (1) {
-        printf("[%s]/> ", argv[1]);
-        char *input = get_input();
+        // prompt now shows the current path
+        printf("[%s]%s/> ", argv[1], cwd);
+
+        char      *input  = get_input();
         tokenlist *tokens = get_tokens(input);
 
         if (tokens->size > 0) {
@@ -137,9 +163,13 @@ int main(int argc, char *argv[]) {
                 list_directory(image, &fat32, current_cluster);
             }
             else if (strcmp(tokens->items[0], "cd") == 0) {
-                int rc = change_directory(image, &fat32, &current_cluster, tokens);
-                if      (rc == 1) printf("Directory not found: %s\n", tokens->items[1]);
-                else if (rc == 2) printf("Not a directory:    %s\n", tokens->items[1]);
+                int rc = change_directory(image, &fat32,
+                                          &current_cluster,
+                                          tokens, cwd);
+                if      (rc == 1)
+                    printf("Directory not found: %s\n", tokens->items[1]);
+                else if (rc == 2)
+                    printf("Not a directory:    %s\n", tokens->items[1]);
             }
             else if (strcmp(tokens->items[0], "exit") == 0) {
                 break;
@@ -156,3 +186,4 @@ int main(int argc, char *argv[]) {
     fclose(image);
     return 0;
 }
+
