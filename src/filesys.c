@@ -32,7 +32,14 @@ int main(int argc, char *argv[]) {
         if (tokens->size > 0) {
             if (strcmp(tokens->items[0], "info") == 0) {
                 print_fat32_info(&fat32);
-            } 
+            }
+            else if (strcmp(tokens->items[0], "ls") == 0) {
+                list_directory(image, &fat32, current_cluster);
+                }
+            else if (strcmp(tokens->items[0], "cd") == 0) {
+                if (change_directory(image, &fat32, &current_cluster, tokens) != 0)
+                    printf("Directory not found: %s\n", tokens->items[1]);
+                }
             else if (strcmp(tokens->items[0], "exit") == 0) {
                 break;
             } 
