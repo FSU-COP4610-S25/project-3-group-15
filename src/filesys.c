@@ -390,29 +390,42 @@ void cmd_read(FILE *img, FAT32 *fs, tokenlist *tok) {
         return;
     }
 
+    // Step 1: Check if file exists and is not a directory
+    char shortname[11];
+    uint32_t cluster = 0, size = 0;
+    uint8_t attr = 0;
+    if (find_entry(img, fs, cur, fname, shortname, &cluster, &size, &attr) != 0) {
+        printf("Error: file '%s' does not exist\n", fname);
+        return;
+    }
+
+    if (attr & ATTR_DIRECTORY) {
+        printf("Error: '%s' is a directory\n", fname);
+        return;
+    }
+
+    // Step 2: Check if file is open and open for reading
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
         if (open_files[i].in_use && strcmp(open_files[i].name, fname) == 0) {
-            // Check mode
             if (!strchr(open_files[i].mode, 'r')) {
-                printf("Error: file not opened for reading\n");
+                printf("Error: file '%s' is not opened for reading\n", fname);
                 return;
             }
 
             uint32_t offset = open_files[i].offset;
-            uint32_t size = open_files[i].size;
+            uint32_t file_size = open_files[i].size;
 
-            if (offset >= size) {
+            if (offset >= file_size) {
                 printf("EOF reached\n");
                 return;
             }
 
-            uint32_t to_read = (offset + req_size > size) ? (size - offset) : req_size;
+            uint32_t to_read = (offset + req_size > file_size) ? (file_size - offset) : req_size;
             uint32_t cluster_size = fs->bytes_per_sector * fs->sectors_per_cluster;
             uint32_t curr_cluster = open_files[i].cluster;
             uint32_t bytes_left = to_read;
             uint32_t skip = offset;
 
-            // Follow FAT chain to the cluster that contains the offset
             while (skip >= cluster_size) {
                 curr_cluster = get_next_cluster(img, fs, curr_cluster);
                 if (curr_cluster >= 0x0FFFFFF8) {
@@ -456,8 +469,10 @@ void cmd_read(FILE *img, FAT32 *fs, tokenlist *tok) {
         }
     }
 
+    // File exists, but wasn't found in open table
     printf("Error: file '%s' is not open\n", fname);
 }
+
 
 
 int main(int argc, char*argv[]){
