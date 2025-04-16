@@ -377,7 +377,7 @@ uint32_t get_next_cluster(FILE *img, FAT32 *fs, uint32_t cluster) {
     return entry & 0x0FFFFFFF;
 }
 
-void cmd_read(FILE *img, FAT32 *fs, tokenlist *tok) {
+void cmd_read(FILE *img, FAT32 *fs, uint32_t cur, tokenlist *tok){
     if (tok->size < 3) {
         printf("Usage: read <filename> <size>\n");
         return;
@@ -497,7 +497,7 @@ int main(int argc, char*argv[]){
             else if (!strcmp(tl->items[0], "close")) cmd_close(tl);
             else if (!strcmp(tl->items[0], "lsof")) cmd_lsof();
             else if (!strcmp(tl->items[0], "lseek")) cmd_lseek(tl);
-            else if (!strcmp(tl->items[0], "read")) cmd_read(img, &fs, tl);
+            else if (!strcmp(tl->items[0], "read")) cmd_read(img, &fs, cur, tl);
             else printf("Unknown: %s\n",tl->items[0]);
         }
         free(in); free_tokens(tl);
