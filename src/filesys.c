@@ -119,6 +119,69 @@ int change_directory(FILE *img, FAT32 *fs,
     return status;
 }
 
+void mkdir_entry(FILE *img, FAT32 *fs, uint32_t current_cluster, const char *name, int is_dir) {
+    uint32_t sector = first_sector_of(fs, current_cluster);
+    uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+    uint8_t *buf = malloc(bpc);
+
+    fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
+    fread(buf, 1, bpc, img);
+
+    // Convert name to 8.3 format
+    char entry_name[11] = { ' ' };
+    int i = 0, j = 0;
+    while (name[i] && name[i] != '.' && j < 8) entry_name[j++] = toupper(name[i++]);
+    if (name[i] == '.') {
+        i++;
+        j = 8;
+        while (name[i] && j < 11) entry_name[j++] = toupper(name[i++]);
+    }
+
+    // Check if it already exists
+    for (uint32_t off = 0; off < bpc; off += 32) {
+        if (memcmp(&buf[off], entry_name, 11) == 0) {
+            printf("Error: entry '%s' already exists\n", name);
+            free(buf);
+            return;
+        }
+    }
+
+    // Find a free slot
+    int found = 0;
+    uint32_t offset = 0;
+    for (; offset < bpc; offset += 32) {
+        if (buf[offset] == 0x00 || buf[offset] == 0xE5) {
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        printf("Error: no space in current directory\n");
+        free(buf);
+        return;
+    }
+
+    // Write new entry
+    memcpy(&buf[offset], entry_name, 11);
+    buf[offset + 11] = is_dir ? 0x10 : 0x20; // attributes
+    for (int i = 12; i < 32; i++) buf[offset + i] = 0;
+
+    // No allocated cluster yet → set cluster fields to 0
+    *(uint16_t *)&buf[offset + 20] = 0;
+    *(uint16_t *)&buf[offset + 26] = 0;
+
+    // File size = 0
+    *(uint32_t *)&buf[offset + 28] = 0;
+
+    // Write back
+    fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
+    fwrite(buf, 1, bpc, img);
+    fflush(img);
+
+    printf("Created %s: %s\n", is_dir ? "directory" : "file", name);
+    free(buf);
+}
+
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
@@ -164,6 +227,20 @@ int main(int argc, char *argv[]) {
             else if (strcmp(tokens->items[0], "exit") == 0) {
                 break;
             }
+            else if (strcmp(tokens->items[0], "mkdir") == 0) {
+                if (tokens->size < 2) {
+                    printf("Usage: mkdir <dirname>\n");
+                } else {
+                    mkdir_entry(image, &fat32, current_cluster, tokens->items[1], 1);
+                }
+            }
+            else if (strcmp(tokens->items[0], "creat") == 0) {
+                if (tokens->size < 2) {
+                    printf("Usage: creat <filename>\n");
+                } else {
+                    mkdir_entry(image, &fat32, current_cluster, tokens->items[1], 0);
+                }
+            }            
             else {
                 printf("Unknown command: %s\n", tokens->items[0]);
             }
