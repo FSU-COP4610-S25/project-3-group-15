@@ -23,6 +23,8 @@ typedef struct {
 } OpenFile;
 
 OpenFile open_files[MAX_OPEN_FILES] = {0};
+void cmd_write(FILE *img, FAT32 *fs, uint32_t cur, tokenlist *tok);
+void set_fat_entry(FILE *img, FAT32 *fs, uint32_t cluster, uint32_t value);
 
 // Compute the first sector of a data cluster
 static uint32_t first_sector_of(FAT32 *fs, uint32_t cluster) {
@@ -473,6 +475,128 @@ void cmd_read(FILE *img, FAT32 *fs, uint32_t cur, tokenlist *tok){
     printf("Error: file '%s' is not open\n", fname);
 }
 
+void cmd_write(FILE *img, FAT32 *fs, uint32_t cur, tokenlist *tok) {
+    if (tok->size < 3) {
+        printf("Usage: write <filename> \"<string>\"\n");
+        return;
+    }
+
+    const char *fname = tok->items[1];
+    char *data = tok->items[2];
+    if (data[0] == '"') data++;
+    size_t len = strlen(data);
+    if (data[len - 1] == '"') data[len - 1] = '\0';
+    len = strlen(data);
+
+    char shortname[11];
+    uint32_t cluster = 0, size = 0;
+    uint8_t attr = 0;
+    if (find_entry(img, fs, cur, fname, shortname, &cluster, &size, &attr) != 0) {
+        printf("Error: file '%s' does not exist\n", fname);
+        return;
+    }
+    if (attr & ATTR_DIRECTORY) {
+        printf("Error: '%s' is a directory\n", fname);
+        return;
+    }
+
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (open_files[i].in_use && strcmp(open_files[i].name, fname) == 0) {
+            if (!strchr(open_files[i].mode, 'w')) {
+                printf("Error: file '%s' not opened for writing\n", fname);
+                return;
+            }
+
+            uint32_t offset = open_files[i].offset;
+            uint32_t needed = offset + len;
+            uint32_t cluster_size = fs->bytes_per_sector * fs->sectors_per_cluster;
+
+            uint32_t num_clusters = (needed + cluster_size - 1) / cluster_size;
+            uint32_t curr = open_files[i].cluster;
+            uint32_t chain_len = 1;
+            uint32_t tail = curr;
+
+            while (get_next_cluster(img, fs, tail) < 0x0FFFFFF8) {
+                tail = get_next_cluster(img, fs, tail);
+                chain_len++;
+            }
+
+            uint32_t extra = num_clusters > chain_len ? num_clusters - chain_len : 0;
+            while (extra > 0) {
+                uint32_t new_cluster = allocate_cluster(img, fs);
+                set_fat_entry(img, fs, tail, new_cluster);
+                set_fat_entry(img, fs, new_cluster, EOC_MARK);
+                tail = new_cluster;
+                extra--;
+            }
+
+            curr = open_files[i].cluster;
+            uint32_t skip = offset;
+            while (skip >= cluster_size) {
+                curr = get_next_cluster(img, fs, curr);
+                skip -= cluster_size;
+            }
+
+            size_t written = 0;
+            while (written < len && curr < 0x0FFFFFF8) {
+                uint32_t sec = first_sector_of(fs, curr);
+                uint8_t *buf = malloc(cluster_size);
+                fseek(img, sec * fs->bytes_per_sector, SEEK_SET);
+                fread(buf, 1, cluster_size, img);
+
+                size_t start = skip;
+                size_t space = cluster_size - start;
+                size_t to_copy = len - written < space ? len - written : space;
+
+                memcpy(buf + start, data + written, to_copy);
+                fseek(img, sec * fs->bytes_per_sector, SEEK_SET);
+                fwrite(buf, 1, cluster_size, img);
+                free(buf);
+
+                written += to_copy;
+                skip = 0;
+                if (written < len)
+                    curr = get_next_cluster(img, fs, curr);
+            }
+
+            open_files[i].offset += written;
+            if (open_files[i].offset > open_files[i].size)
+                open_files[i].size = open_files[i].offset;
+
+            // Update file size in directory entry
+            uint32_t dir_sector = first_sector_of(fs, cur);
+            uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+            uint8_t *dir_buf = malloc(bpc);
+            fseek(img, dir_sector * fs->bytes_per_sector, SEEK_SET);
+            fread(dir_buf, 1, bpc, img);
+
+            for (uint32_t off = 0; off < bpc; off += 32) {
+                if (memcmp(dir_buf + off, shortname, 11) == 0) {
+                    *(uint32_t *)(dir_buf + off + 28) = open_files[i].size;
+                    break;
+                }
+            }
+
+            fseek(img, dir_sector * fs->bytes_per_sector, SEEK_SET);
+            fwrite(dir_buf, 1, bpc, img);
+            free(dir_buf);
+
+            printf("Wrote %zu bytes to '%s'\n", written, fname);
+            return;
+        }
+    }
+
+    printf("Error: file '%s' is not open\n", fname);
+}
+
+void set_fat_entry(FILE *img, FAT32 *fs, uint32_t cluster, uint32_t value) {
+    for (int i = 0; i < fs->num_fats; i++) {
+        uint32_t fat_offset = (fs->reserved_sector_count + i * fs->fat_size) * fs->bytes_per_sector;
+        fseek(img, fat_offset + cluster * 4, SEEK_SET);
+        value &= 0x0FFFFFFF;
+        fwrite(&value, 4, 1, img);
+    }
+}
 
 
 int main(int argc, char*argv[]){
@@ -498,6 +622,8 @@ int main(int argc, char*argv[]){
             else if (!strcmp(tl->items[0], "lsof")) cmd_lsof();
             else if (!strcmp(tl->items[0], "lseek")) cmd_lseek(tl);
             else if (!strcmp(tl->items[0], "read")) cmd_read(img, &fs, cur, tl);
+            else if (!strcmp(tl->items[0], "write")) cmd_write(img, &fs, cur, tl);
+
             else printf("Unknown: %s\n",tl->items[0]);
         }
         free(in); free_tokens(tl);
