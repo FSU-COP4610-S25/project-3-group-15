@@ -62,68 +62,100 @@ void list_directory(FILE *img, FAT32 *fs, uint32_t cluster) {
 }
 
 // Change directory, update cwd string
-int change_directory(FILE *img, FAT32 *fs, uint32_t *cur, tokenlist *tok, char *cwd) {
-    if (tok->size<2) { printf("Usage: cd <dir>\n"); return 1; }
-    const char *t=tok->items[1];
-    if (!strcmp(t,".")) return 0;
-    if (!strcmp(t,"..")) {
-        // Open the current cluster and find the ".." entry
+int change_directory(FILE *img, FAT32 *fs, uint32_t *cur, uint32_t *parent, tokenlist *tok, char *cwd) {
+    if (tok->size < 2) {
+        printf("Usage: cd <dir>\n");
+        return 1;
+    }
+
+    const char *t = tok->items[1];
+    if (!strcmp(t, ".")) return 0;
+
+    if (!strcmp(t, "..")) {
+        if (*cur == fs->root_cluster) {
+            cwd[0] = '\0';
+            return 0;
+        }
+
+        // Try to find the ".." entry to get parent cluster
         uint32_t sector = first_sector_of(fs, *cur);
         uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
         uint8_t *buf = malloc(bpc);
         fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
         fread(buf, 1, bpc, img);
-    
+
+        uint32_t parent = fs->root_cluster;
         for (uint32_t off = 0; off < bpc; off += 32) {
             if (buf[off] == 0x00 || buf[off] == 0xE5) continue;
             if (strncmp((char *)&buf[off], "..        ", 11) == 0) {
                 uint16_t hi = *(uint16_t *)&buf[off + 20];
                 uint16_t lo = *(uint16_t *)&buf[off + 26];
-                *cur = ((uint32_t)hi << 16) | lo;
+                parent = ((uint32_t)hi << 16) | lo;
                 break;
             }
         }
+        free(buf);
 
-    free(buf);
+        *cur = parent;
 
-    // Trim cwd path (go up one level)
-    char *last_slash = strrchr(cwd, '/');
-    if (last_slash != NULL) {
-        *last_slash = '\0';
-        if (strlen(cwd) == 0)
-            cwd[0] = '\0';  // back to root
+        // Trim the last "/dir" from cwd
+        char *last = strrchr(cwd, '/');
+        if (last) {
+            *last = '\0';
+            if (strlen(cwd) == 0)
+                cwd[0] = '\0';
+        }
+
+        return 0;
     }
 
-    return 0;
-}
+    // Normal directory change (not "..")
+    uint32_t sector = first_sector_of(fs, *cur);
+    uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+    uint8_t *buf = malloc(bpc);
+    fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
+    fread(buf, 1, bpc, img);
 
-    uint32_t sector=first_sector_of(fs,*cur), bpc=fs->bytes_per_sector*fs->sectors_per_cluster;
-    uint8_t *buf=malloc(bpc);
-    fseek(img,sector*fs->bytes_per_sector,SEEK_SET); fread(buf,1,bpc,img);
-    int status=1;
-    for(uint32_t off=0;off<bpc;off+=32){
-        uint8_t f=buf[off]; if(f==0x00) break; if(f==0xE5) continue;
-        uint8_t a=buf[off+11]; if((a&0x0F)==0x0F) continue; if(buf[off]=='.') continue;
-        char name[9]={0}, ext[4]={0}, full[13];
-        memcpy(name,&buf[off],8); memcpy(ext,&buf[off+8],3);
-        for(int i=7;i>=0&&name[i]==' ';i--) name[i]='\0';
-        for(int i=2;i>=0&&ext[i]==' '; i--) ext[i]='\0';
-        if(ext[0]) snprintf(full,sizeof(full),"%s.%s",name,ext);
-        else       snprintf(full,sizeof(full),"%s",name);
-        if(!strcmp(full,t)){
-            if(!(a&ATTR_DIRECTORY)){ status=2; break;}
-            uint16_t hi=*(uint16_t*)&buf[off+20], lo=*(uint16_t*)&buf[off+26];
-            *cur = ((uint32_t)hi<<16)|lo; status=0;
+    int status = 1;
+    for (uint32_t off = 0; off < bpc; off += 32) {
+        uint8_t f = buf[off];
+        if (f == 0x00) break;
+        if (f == 0xE5) continue;
+        uint8_t a = buf[off + 11];
+        if ((a & 0x0F) == 0x0F) continue;
+        if (buf[off] == '.') continue;
+
+        char name[9] = {0}, ext[4] = {0}, full[13];
+        memcpy(name, &buf[off], 8);
+        memcpy(ext, &buf[off + 8], 3);
+        for (int i = 7; i >= 0 && name[i] == ' '; i--) name[i] = '\0';
+        for (int i = 2; i >= 0 && ext[i] == ' '; i--) ext[i] = '\0';
+        if (ext[0]) snprintf(full, sizeof(full), "%s.%s", name, ext);
+        else        snprintf(full, sizeof(full), "%s", name);
+
+        if (!strcmp(full, t)) {
+            if (!(a & ATTR_DIRECTORY)) {
+                status = 2;
+                break;
+            }
+            uint16_t hi = *(uint16_t *)&buf[off + 20];
+            uint16_t lo = *(uint16_t *)&buf[off + 26];
+            *parent = *cur;
+            *cur = ((uint32_t)hi << 16) | lo;
+            status = 0;
+
             char tmp[1024];
-            if (!cwd[0]) snprintf(tmp,sizeof(tmp),"/%s",t);
-            else         snprintf(tmp,sizeof(tmp),"%s/%s",cwd,t);
-            strcpy(cwd,tmp);
+            if (!cwd[0]) snprintf(tmp, sizeof(tmp), "/%s", t);
+            else         snprintf(tmp, sizeof(tmp), "%s/%s", cwd, t);
+            strcpy(cwd, tmp);
             break;
         }
     }
+
     free(buf);
     return status;
 }
+
 
 // Format to 8.3 uppercase, space-padded
 static void format_short_name(const char *in, char out[11]) {
@@ -227,24 +259,48 @@ int find_entry(FILE *img, FAT32 *fs, uint32_t cluster, const char *target, char 
 
 // mkdir implementation
 void cmd_mkdir(FILE*img, FAT32*fs, uint32_t*cur, tokenlist*tok){
-    if(tok->size<2){ printf("Usage: mkdir <dir>\n"); return; }
-    char sn[11]; format_short_name(tok->items[1],sn);
-    if(entry_exists(img,fs,*cur,sn)){ printf("Error: '%s' exists\n",tok->items[1]); return; }
-    uint32_t nc=allocate_cluster(img,fs);
-    if(!nc){ printf("Error: no free cluster\n"); return; }
-    // zero new cluster
-    uint32_t s0=first_sector_of(fs,nc), bpc=fs->bytes_per_sector*fs->sectors_per_cluster;
-    uint8_t *z=calloc(1,bpc);
-    fseek(img,s0*fs->bytes_per_sector,SEEK_SET); fwrite(z,1,bpc,img); free(z);
-    // write '.' entry
-    char dot[11]={' '}, dot2[11]={' '};
-    dot[0]='.';   dot2[0]='.'; dot2[1]='.';
-    add_directory_entry(img,fs,nc,dot,ATTR_DIRECTORY,nc,0);
-    add_directory_entry(img,fs,nc,dot2,ATTR_DIRECTORY,*cur,0);
-    // link into parent
-    if(add_directory_entry(img,fs,*cur,sn,ATTR_DIRECTORY,nc,0)!=0)
+    if (tok->size < 2) {
+        printf("Usage: mkdir <dir>\n");
+        return;
+    }
+
+    char sn[11];
+    format_short_name(tok->items[1], sn);
+
+    if (entry_exists(img, fs, *cur, sn)) {
+        printf("Error: '%s' exists\n", tok->items[1]);
+        return;
+    }
+
+    uint32_t nc = allocate_cluster(img, fs);
+    if (!nc) {
+        printf("Error: no free cluster\n");
+        return;
+    }
+
+    // zero out new cluster
+    uint32_t s0 = first_sector_of(fs, nc);
+    uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+    uint8_t *z = calloc(1, bpc);
+    fseek(img, s0 * fs->bytes_per_sector, SEEK_SET);
+    fwrite(z, 1, bpc, img);
+    free(z);
+
+    // Properly formatted "." and ".." entries
+    char dot[11]  = { ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ' };
+    char dot2[11] = { ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ' };
+    dot[0] = '.';
+    dot2[0] = '.';
+    dot2[1] = '.';
+
+    add_directory_entry(img, fs, nc, dot,  ATTR_DIRECTORY, nc,    0);  // .
+    add_directory_entry(img, fs, nc, dot2, ATTR_DIRECTORY, *cur, 0);  // ..
+
+    // Add new dir entry to parent
+    if (add_directory_entry(img, fs, *cur, sn, ATTR_DIRECTORY, nc, 0) != 0)
         printf("Error: cannot link dir\n");
 }
+
 
 // creat implementation
 void cmd_creat(FILE*img, FAT32*fs, uint32_t*cur, tokenlist*tok){
@@ -598,18 +654,123 @@ void set_fat_entry(FILE *img, FAT32 *fs, uint32_t cluster, uint32_t value) {
     }
 }
 
+void remove_directory_entry(FILE *img, FAT32 *fs, uint32_t cluster, char shortname[11]) {
+    uint32_t sector = first_sector_of(fs, cluster);
+    uint32_t bpc = fs->bytes_per_sector * fs->sectors_per_cluster;
+    uint8_t *buf = malloc(bpc);
+    fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
+    fread(buf, 1, bpc, img);
+
+    for (uint32_t off = 0; off < bpc; off += 32) {
+        if (memcmp(&buf[off], shortname, 11) == 0) {
+            buf[off] = 0xE5;  // mark as deleted
+            break;
+        }
+    }
+
+    fseek(img, sector * fs->bytes_per_sector, SEEK_SET);
+    fwrite(buf, 1, bpc, img);
+    free(buf);
+}
+
+void cmd_mv(FILE *img, FAT32 *fs, uint32_t *cur, uint32_t parent_cluster, tokenlist *tok) {
+    if (tok->size < 3) {
+        printf("Usage: mv <source> <dest>\n");
+        return;
+    }
+
+    const char *src = tok->items[1];
+    const char *dest = tok->items[2];
+
+    if (!strcmp(dest, ".") || !strcmp(dest, "..")) {
+        if (!strcmp(dest, ".")) {
+            printf("Error: cannot rename to '.'\n");
+            return;
+        }
+        if (!strcmp(src, "..") || !strcmp(src, ".")) {
+            printf("Error: cannot move '.' or '..'\n");
+            return;
+        }
+
+        char shortname[11];
+        uint32_t src_cluster = 0, src_size = 0;
+        uint8_t src_attr = 0;
+        if (find_entry(img, fs, *cur, src, shortname, &src_cluster, &src_size, &src_attr) != 0) {
+            printf("Error: source '%s' does not exist\n", src);
+            return;
+        }
+
+        if (parent_cluster == 0 || parent_cluster == *cur) {
+            printf("Error: could not locate parent directory\n");
+            return;
+        }
+
+        if (add_directory_entry(img, fs, parent_cluster, shortname, src_attr, src_cluster, src_size) != 0) {
+            printf("Error: could not move to parent\n");
+            return;
+        }
+
+        remove_directory_entry(img, fs, *cur, shortname);
+        printf("Moved '%s' to parent directory\n", src);
+        return;
+    }
+
+    char dest_short[11];
+    format_short_name(dest, dest_short);
+
+    // Check source
+    char src_short[11];
+    uint32_t src_cluster, src_size;
+    uint8_t src_attr;
+    if (find_entry(img, fs, *cur, src, src_short, &src_cluster, &src_size, &src_attr) != 0) {
+        printf("Error: source '%s' does not exist\n", src);
+        return;
+    }
+
+    // Check destination
+    char dummy_short[11];
+    uint32_t dest_cluster, dummy_size;
+    uint8_t dest_attr;
+    int dest_exists = find_entry(img, fs, *cur, dest, dummy_short, &dest_cluster, &dummy_size, &dest_attr) == 0;
+
+    if (dest_exists) {
+        if (!(dest_attr & ATTR_DIRECTORY)) {
+            printf("Error: destination '%s' is a file\n", dest);
+            return;
+        }
+
+        if (add_directory_entry(img, fs, dest_cluster, src_short, src_attr, src_cluster, src_size) != 0) {
+            printf("Error: could not move into directory\n");
+            return;
+        }
+
+        remove_directory_entry(img, fs, *cur, src_short);
+        printf("Moved '%s' to directory '%s'\n", src, dest);
+        return;
+    }
+
+    // Rename in place
+    if (add_directory_entry(img, fs, *cur, dest_short, src_attr, src_cluster, src_size) != 0) {
+        printf("Error: could not rename\n");
+        return;
+    }
+    remove_directory_entry(img, fs, *cur, src_short);
+    printf("Renamed '%s' to '%s'\n", src, dest);
+}
+
 
 int main(int argc, char*argv[]){
     if(argc!=2){ fprintf(stderr,"Usage: %s [IMG]\n",argv[0]); return 1; }
     FILE*img=fopen(argv[1],"rb+"); if(!img){ perror("open"); return 1; }
     FAT32 fs; if(read_boot_sector(img,&fs)) return 1;
     uint32_t cur=fs.root_cluster; char cwd[1024]="";
+    uint32_t parent_cluster = fs.root_cluster;
     while(1){ printf("%s%s> ",argv[1],cwd);
         char*in=get_input(); tokenlist*tl=get_tokens(in);
         if(tl->size){
             if(!strcmp(tl->items[0],"ls"))   list_directory(img,&fs,cur);
             else if(!strcmp(tl->items[0],"cd")){
-                int r=change_directory(img,&fs,&cur,tl,cwd);
+                int r = change_directory(img, &fs, &cur, &parent_cluster, tl, cwd);
                 if(r==1) printf("Directory not found\n");
                 else if(r==2) printf("Not a directory\n");
             }
@@ -623,7 +784,7 @@ int main(int argc, char*argv[]){
             else if (!strcmp(tl->items[0], "lseek")) cmd_lseek(tl);
             else if (!strcmp(tl->items[0], "read")) cmd_read(img, &fs, cur, tl);
             else if (!strcmp(tl->items[0], "write")) cmd_write(img, &fs, cur, tl);
-
+            else if (!strcmp(tl->items[0], "mv")) cmd_mv(img, &fs, &cur,parent_cluster, tl);
             else printf("Unknown: %s\n",tl->items[0]);
         }
         free(in); free_tokens(tl);
